@@ -54,28 +54,64 @@ func DevinCredentialsPath() string {
 	return filepath.Join(base, "devin", "credentials.toml")
 }
 
-var devinStatus = &cliIdentity{name: "devin", exe: func() string { return DevinExecutable() }, ask: func() (string, string, bool, error) { u, p, ok := askDevinIdentity(); return u, p, ok, nil }}
+var devinStatus = &cliIdentity{name: "devin", exe: func() string { return DevinExecutable() }, ask: askDevinStatus}
 
 // devinIdentity is who Devin's CLI says is signed in; see cliIdentity.
 func devinIdentity() (user, plan string, ok bool) { return devinStatus.get() }
 
 func forgetDevinStatus() { devinStatus.forget() }
 
-func askDevinIdentity() (user, plan string, ok bool) { return askDevinIdentityAt("") }
+// devinIdentityTimeout is how long `devin auth status` is given: it asks
+// Devin's servers, and on a real one took 3 to 11 seconds — the 10 seconds
+// it had dropped the account now and then.
+const devinIdentityTimeout = 30 * time.Second
 
-// askDevinIdentityAt asks the CLI who is signed in in home ("" for its own).
+// askDevinStatus asks the CLI who is signed in. An ask that fails, runs out
+// of time (it asks Devin's servers) or prints something else couldn't tell,
+// and the account stays as it was (#154): only a CLI that says nobody is,
+// or keeps no credentials.toml, is sure of nobody.
+func askDevinStatus() (user, plan string, ok bool, err error) { return askDevinStatusAt("") }
+
+// askDevinIdentity is who the CLI says is signed in, sure or not: the
+// sign-in has just written the credentials and has to name the account.
+func askDevinIdentity() (user, plan string, ok bool) {
+	u, p, ok, _ := askDevinStatusAt("")
+	return u, p, ok
+}
+
+// askDevinIdentityAt is askDevinIdentity for the account signed in in home
+// ("" for the CLI's own).
 func askDevinIdentityAt(home string) (user, plan string, ok bool) {
+	u, p, ok, _ := askDevinStatusAt(home)
+	return u, p, ok
+}
+
+// askDevinStatusAt asks the CLI who is signed in in home ("" for its own).
+func askDevinStatusAt(home string) (user, plan string, ok bool, err error) {
 	path := DevinExecutable()
 	if path == "" {
-		return "", "", false
+		return "", "", false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), devinIdentityTimeout)
 	defer cancel()
 	out, err := devinCommand(ctx, home, path, "auth", "status").Output()
-	if err != nil {
-		return "", "", false
+	user, plan, _ = parseDevinStatus(string(out))
+	switch {
+	case user != "":
+		return user, plan, true, nil
+	case strings.Contains(string(out), "Not logged in"), noDevinKey(home):
+		return "", "", false, nil
+	case err == nil:
+		err = errors.New("devin auth status printed no account")
 	}
-	return parseDevinStatus(string(out))
+	return "", "", false, err
+}
+
+// noDevinKey says the account signed in in home keeps no credentials: the
+// CLI can only be sure of nobody, whatever it printed.
+func noDevinKey(home string) bool {
+	_, _, err := DevinAuthAt(home)
+	return err != nil
 }
 
 // parseDevinStatus reads `devin auth status`'s report:
