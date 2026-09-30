@@ -351,6 +351,23 @@ Account:
 // devinSigned is the CLI's own report, as `devin auth status` prints it.
 const devinSigned = `printf 'Logged in (via Devin).\n\nUser:\n  Email:             dev@example.com\n\nAccount:\n  Tier:              Devin Pro\n'`
 
+// fakeDevin points DevinExecutable at a fake CLI of this test's, and puts
+// the CLI and the identity back when it ends: an ask that couldn't tell now
+// leaves the last account served, so a test after this one must not find
+// either.
+func fakeDevin(t *testing.T, exe string) {
+	t.Helper()
+	old := DevinExecutable
+	DevinExecutable = func() string { return exe }
+	t.Cleanup(func() {
+		DevinExecutable = old
+		devinStatus.Lock()
+		devinStatus.user, devinStatus.plan, devinStatus.ok = "", "", false
+		devinStatus.Unlock()
+		forgetDevinStatus()
+	})
+}
+
 // a `devin auth status` that fails, runs out of time (it asks Devin's
 // servers) or prints something else couldn't tell, and the account stays as
 // it was, where it had dropped Devin from the Providers page and routing
@@ -360,7 +377,7 @@ func TestAskDevinStatus(t *testing.T) {
 	home := claudeHome(t)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	exe := filepath.Join(home, "devin")
-	DevinExecutable = func() string { return exe }
+	fakeDevin(t, exe)
 
 	for _, c := range []struct {
 		name, script string
@@ -402,7 +419,7 @@ func TestDevinStatusKeepsTheAccount(t *testing.T) {
 	home := claudeHome(t)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	exe := filepath.Join(home, "devin")
-	DevinExecutable = func() string { return exe }
+	fakeDevin(t, exe)
 	creds := DevinCredentialsPath()
 	if err := os.MkdirAll(filepath.Dir(creds), 0o700); err != nil {
 		t.Fatal(err)
