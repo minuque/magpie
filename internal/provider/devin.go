@@ -69,7 +69,8 @@ const devinIdentityTimeout = 30 * time.Second
 // askDevinStatus asks the CLI who is signed in. An ask that fails, runs out
 // of time (it asks Devin's servers) or prints something else couldn't tell,
 // and the account stays as it was (#154): only a CLI that says nobody is,
-// or keeps no credentials.toml, is sure of nobody.
+// whose account's token was refused, or that keeps no credentials.toml, is
+// sure of nobody.
 func askDevinStatus() (user, plan string, ok bool, err error) { return askDevinStatusAt("") }
 
 // askDevinIdentity is who the CLI says is signed in, sure or not: the
@@ -99,12 +100,32 @@ func askDevinStatusAt(home string) (user, plan string, ok bool, err error) {
 	switch {
 	case user != "":
 		return user, plan, true, nil
-	case strings.Contains(string(out), "Not logged in"), noDevinKey(home):
+	case devinSignedOut(string(out)), noDevinKey(home):
 		return "", "", false, nil
 	case err == nil:
 		err = errors.New("devin auth status printed no account")
 	}
 	return "", "", false, err
+}
+
+// devinSignedOut says the CLI's own report is one of nobody signed in: it
+// says so itself, or Devin's servers refused the account's token (a revoked
+// or expired one) and the CLI prints that inside a report that still begins
+// `Logged in`, with no account in it. A CLI that couldn't reach them says
+// `Connection failed` instead, and one that ran out of time says nothing:
+// neither is this, and both keep the account served (#154).
+func devinSignedOut(out string) bool {
+	for _, said := range []string{
+		"Not logged in",
+		"Authentication required",
+		"Invalid token",
+		"try logging out and logging in again",
+	} {
+		if strings.Contains(out, said) {
+			return true
+		}
+	}
+	return false
 }
 
 // noDevinKey says the account signed in in home keeps no credentials: the
